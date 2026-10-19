@@ -32,6 +32,58 @@ function testarPorta($host, $porta, $timeout = 3)
     );
 }
 
+/**
+ * Executa o comando de ping tentando os mecanismos disponiveis no servidor.
+ * Devolve array(saida, codigo).
+ */
+function executarPing($cmd)
+{
+    $saida = '';
+    $codigo = -1;
+
+    if (function_exists('exec')) {
+        $linhas = array();
+        $codigo = 0;
+        @exec($cmd . ' 2>&1', $linhas, $codigo);
+        $saida = trim(implode("\n", $linhas));
+        if ($saida !== '') {
+            return array($saida, $codigo);
+        }
+    }
+
+    if (function_exists('shell_exec')) {
+        $retorno = @shell_exec($cmd . ' 2>&1');
+        if (is_string($retorno) && trim($retorno) !== '') {
+            return array(trim($retorno), 0);
+        }
+    }
+
+    if (function_exists('proc_open')) {
+        $descritores = array(
+            1 => array('pipe', 'w'),
+            2 => array('pipe', 'w'),
+        );
+        $processo = @proc_open($cmd, $descritores, $pipes);
+        if (is_resource($processo)) {
+            $out = isset($pipes[1]) ? stream_get_contents($pipes[1]) : '';
+            $err = isset($pipes[2]) ? stream_get_contents($pipes[2]) : '';
+            if (isset($pipes[1])) {
+                fclose($pipes[1]);
+            }
+            if (isset($pipes[2])) {
+                fclose($pipes[2]);
+            }
+            $codigo = proc_close($processo);
+            $saida = trim($out . "\n" . $err);
+            if ($saida !== '') {
+                return array($saida, $codigo);
+            }
+        }
+    }
+
+    return array($saida, $codigo);
+}
+
 $host = isset($_GET['host']) ? trim((string) $_GET['host']) : '8.8.8.8';
 
 $valido = ($host !== '') && (
@@ -46,20 +98,17 @@ $aviso = '';
 
 if (!$valido) {
     $aviso = 'Host invalido. Informe um IP (ex.: 8.8.8.8) ou um dominio (ex.: google.com).';
-} elseif (function_exists('exec') && function_exists('escapeshellarg')) {
+} else {
     $cmd = (stripos(PHP_OS, 'WIN') === 0)
         ? 'ping -n 4 -w 2000 ' . escapeshellarg($host)
         : 'ping -c 4 -W 2 ' . escapeshellarg($host);
 
-    $linhas = array();
-    $codigoPing = 0;
-    @exec($cmd . ' 2>&1', $linhas, $codigoPing);
-    $saidaPing = trim(implode("\n", $linhas));
+    list($saidaPing, $codigoPing) = executarPing($cmd);
     $pingExecutado = ($saidaPing !== '');
 }
 
 if ($valido && !$pingExecutado) {
-    $aviso = 'O comando ping nao respondeu neste servidor. O teste TCP abaixo mede a latencia para o mesmo destino.';
+    $aviso = 'O comando ping nao devolveu saida neste servidor (pode estar desabilitado pelas configuracoes de PHP ou pela hospedagem). O teste TCP abaixo mede a latencia para o mesmo destino.';
 }
 
 $testes = array();
@@ -96,7 +145,10 @@ $hostSeguro = htmlspecialchars($host, ENT_QUOTES, 'UTF-8');
                 </div>
                 <button type="submit" class="btn btn-primary">Testar</button>
             </form>
-            <p class="help-block">IP ou dominio. O teste e feito a partir do servidor onde o sistema esta rodando.</p>
+            <p class="help-block">
+                IP ou dominio. O teste e feito a partir do servidor onde o sistema esta rodando,
+                em <?php echo date('d/m/Y H:i:s'); ?>.
+            </p>
         </div>
     </div>
 
